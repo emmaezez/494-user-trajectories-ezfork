@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.7"
+__generated_with = "0.18.1"
 app = marimo.App(width="medium")
 
 
@@ -15,12 +15,11 @@ def _(mo):
 @app.cell
 def _():
     import marimo as mo
-    import re
+    import re 
     import os
     import polars as pl
     from openai import OpenAI
     from tqdm import tqdm
-
     return OpenAI, mo, os, pl, re, tqdm
 
 
@@ -30,7 +29,7 @@ def _(OpenAI, os):
     # Make sure to create the file OPENAIKEY.txt before running this
     # (You can use the OPENAIKEY.txt.template file as a template)
     with open("secrets/OPENAIKEY.txt", "r") as f:
-        os.environ["OPENAI_API_KEY"] = f.read().strip()
+        os.environ["OPENAI_API_KEY"] = f.read()
     client = OpenAI()
     return (client,)
 
@@ -45,7 +44,7 @@ def _(pl):
 @app.cell
 def _(df):
     # Look at data
-    df.head()
+    df
     return
 
 
@@ -59,38 +58,32 @@ def _(mo):
 
 @app.cell
 def _():
-    SIMPLE_PROMPT_TEMPLATE_change = """You are helping label political tweets by their partisan lean.
+    SIMPLE_PROMPT_TEMPLATE = """# TWEET
     {tweet}
 
     # ANALYSIS INSTRUCTIONS
 
     Use chain-of-thought reasoning to classify this tweet's partisan lean.
 
-    **Step 1: Summarize the tweet's argument**3
+    **Step 1: Summarize the tweet's argument**
     What is this tweet claiming, advocating, or criticizing?
 
-    1. What is the tweet primarily expressing, arguing, or responding to?
-    2. Does the tweet explicitly support, criticize, or question any political ideology,
-    political group, policy, or public figure?
-    3. Is there any relevant political or social context that helps explain this tweet,
-    such as current events, political debates, or commonly discussed issues?
-    4. Based on the tweet and its context, determine which political stance 
-    (left-wing, centrist, or right-wing) the tweet best aligns with.
+    **Step 2: Summarize context**
+    What relevant background information is necessary to understand this tweet's ideological positioning?
 
-    If you believe the tweet does not express any political opinion or stance,
-    please mark it as "None."
+    **Step 3: Determine direction**
+    Based on the tweet and context, which partisan lean does the tweet align with?
 
     # RESPONSE FORMAT
 
     <analysis>
-    **Main idea:**  
-    Briefly explain what the tweet is mainly saying or arguing (1–2 sentences).
+    **Tweet's main argument:** [1-2 sentences]
 
-    **Context:** 
-    Describe any relevant political or social background that helps explain the tweet[1-2 sentence]
+    **Context:** [1-2 sentence]
 
     **Directional assessment:** [Direction] because [1-2 sentence reason]
     </analysis>
+
     <output>
     [LEFT/CENTER/RIGHT/MIXED]
     </output>
@@ -100,27 +93,27 @@ def _():
     NONE
     </output>
     """
-    return (SIMPLE_PROMPT_TEMPLATE_change,)
+
+    return (SIMPLE_PROMPT_TEMPLATE,)
 
 
 @app.cell
-def _(SIMPLE_PROMPT_TEMPLATE_change, client, df, pl, re, tqdm):
+def _(SIMPLE_PROMPT_TEMPLATE, client, df, pl, re, tqdm):
     def _parse_output(output_text: str) -> str:
         text = (output_text or "").strip()
         # Prefer the explicit <output> block if present
-        m = re.search(
-            r"<output>\s*(.*?)\s*</output>", text, flags=re.DOTALL | re.IGNORECASE
-        )
+        m = re.search(r"<output>\s*(.*?)\s*</output>", text, flags=re.DOTALL | re.IGNORECASE)
         if m:
             text = m.group(1).strip()
         return text.strip().upper()
-
+    
     def _query_llm(row: dict) -> dict:
         tweet = row["tweet"]
-        prompt = SIMPLE_PROMPT_TEMPLATE_change.format(tweet=tweet)
-        resp = client.responses.create(model="gpt-4.1-mini", input=prompt, max_output_tokens=160)
+        prompt = SIMPLE_PROMPT_TEMPLATE.format(tweet=tweet)
+        resp = client.responses.create(model="gpt-4.1-mini", input=prompt)
         output_text = getattr(resp, "output_text", "") or ""
         return output_text
+
 
     # Process rows with a for-loop
     results = []
@@ -137,12 +130,6 @@ def _(SIMPLE_PROMPT_TEMPLATE_change, client, df, pl, re, tqdm):
 
 
 @app.cell
-def _(pl, results):
-    pl.DataFrame(results)
-    return
-
-
-@app.cell
 def _(mo):
     mo.md(r"""
     # Evaluation
@@ -153,38 +140,8 @@ def _(mo):
 @app.cell
 def _(pl, results):
     # Look at results
-    results_df = pl.DataFrame(results)
-    results_df
-    return (results_df,)
-
-
-@app.cell
-def _(results_df, pl):
-    # Calculate accuracy
-    correct = (results_df["partisan_lean"] == results_df["prediction"]).sum()
-    total = results_df.height
-    accuracy = correct / total
-    
-    print(f"Overall Accuracy: {accuracy:.1%} ({correct}/{total})")
-    
-    # Per-category accuracy
-    category_accuracy = (
-        results_df
-        .with_columns(
-            (pl.col("partisan_lean") == pl.col("prediction")).alias("is_correct")
-        )
-        .group_by("partisan_lean")
-        .agg([
-            pl.col("is_correct").sum().alias("correct"),
-            pl.col("is_correct").count().alias("total"),
-            (pl.col("is_correct").sum() / pl.col("is_correct").count()).alias("accuracy")
-        ])
-        .sort("partisan_lean")
-    )
-    
-    print("\nPer-Category Accuracy:")
-    category_accuracy
-    return (accuracy, category_accuracy, correct, total)
+    pl.DataFrame(results)
+    return
 
 
 @app.cell
@@ -199,7 +156,7 @@ def _(mo):
 def _(pl, results):
     crosstab = (
         pl.DataFrame(results)
-        .group_by("partisan_lean", "prediction")
+        .group_by('partisan_lean', 'prediction')
         .len()
         .pivot(index="partisan_lean", on="prediction", values="len")
     )
@@ -207,15 +164,15 @@ def _(pl, results):
     # Get prediction columns (everything except the index)
     prediction_columns = [col for col in crosstab.columns if col != "partisan_lean"]
 
-    crosstab = crosstab.with_columns(
-        pl.concat_str([pl.lit("actually_"), pl.col("partisan_lean")]).alias(
-            "partisan_lean"
+    crosstab = (
+        crosstab
+        .with_columns(
+            pl.concat_str([pl.lit("actually_"), pl.col("partisan_lean")]).alias("partisan_lean")
         )
-    ).rename(
-        {
+        .rename({
             "partisan_lean": "actual_label",
-            **{col: f"predicted_{col}" for col in prediction_columns},
-        }
+            **{col: f"predicted_{col}" for col in prediction_columns}
+        })
     )
 
     crosstab
